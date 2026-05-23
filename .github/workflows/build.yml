@@ -1,7 +1,8 @@
 name: Build Commercial APK and AAB
 on:
   push:
-    branches: [ main, master, "رئيسي" ]
+    branches:
+      - "*"
 
 jobs:
   build:
@@ -36,9 +37,7 @@ jobs:
     - name: Build Both Formats (APK & AAB)
       run: |
         cd build_tmp
-        # بناء نسخة الـ APK العادية للتجربة الفورية
         cordova build android --device --release
-        # بناء نسخة الـ AAB الاحترافية المخصصة للمتجر
         cordova build android --device --release -- --appBundle
 
     - name: Upload Testing APK Artifact
