@@ -1,0 +1,32 @@
+<?xml version='1.0' encoding='utf-8'?>
+<widget id="com.pharaoh.hollowgame" version="1.0.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+    
+    <name>Hollow Pharaoh</name>
+    
+    <description>
+        لعبة ألغاز وفخاخ فرعونية تجارية مدمجة بالإعلانات أندرويد صافي.
+    </description>
+    
+    <author email="developer@example.com" href="http://example.com">
+        Pharaoh Developer Team
+    </author>
+    
+    <content src="index.html" />
+    
+    <access origin="*" />
+    <allow-intent href="http://*/*" />
+    <allow-intent href="https://*/*" />
+    <allow-navigation href="*" />
+
+    <preference name="Orientation" value="landscape" />
+    <preference name="Fullscreen" value="true" />
+    <preference name="BackgroundColor" value="0xff0c0a12" />
+
+    <plugin name="cordova-plugin-admob-free" spec="^1.0.0" />
+
+    <platform name="android">
+        <allow-intent href="market:*" />
+        <preference name="AndroidXEnabled" value="true" />
+    </platform>
+
+</widget>

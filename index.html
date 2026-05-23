@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Hollow Pharaoh</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            margin: 0;
+            padding: 0;
+        }
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #0c0a12;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        #gameContainer {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            background-color: #0c0a12;
+        }
+        /* تصميم مساحة إعلان البانر السفلي لـ AdMob */
+        #admobBanner {
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 320px;
+            height: 50px;
+            background-color: #222;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            border-top: 2px solid #b48c32;
+            z-index: 10;
+            display: none; /* يظهر برمجياً فقط أثناء اللعب */
+        }
+    </style>
+    
+    <script src="cordova.js"></script>
+</head>
+<body>
+
+<div id="gameContainer">
+    <canvas id="gameCanvas"></canvas>
+    <div id="admobBanner">تحميل الإعلان التجاري...</div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const banner = document.getElementById('admobBanner');
+
+    // معرّف الوحدة الإعلانية الحقيقي الخاص بك من لقطة الشاشة
+    const ADMOB_BANNER_ID = 'ca-app-pub-1051744026108354/2445816077';
+
+    // ضبط أبعاد الشاشة ديناميكياً لتناسب أي هاتف
+    function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // 1. مدير حالات اللعبة
+    const GameState = {
+        MAIN_MENU: 'MAIN_MENU',
+        SETTINGS: 'SETTINGS',
+        PLAYING: 'PLAYING',
+        GAME_OVER: 'GAME_OVER',
+        VICTORY: 'VICTORY'
+    };
+    let currentState = GameState.MAIN_MENU;
+
+    // 2. إعدادات الميديا والصوت الخارجية
+    const audio = {
+        menuMusic: new Audio('Assets/menu_music.mp3'),
+        spikeHit: new Audio('Assets/spike_hit.mp3')
+    };
+    audio.menuMusic.loop = true;
+    let isSoundEnabled = true;
+
+    // 3. كائن البطل وفيزيائية القفز والسرعة والجاذبية
+    const player = {
+        x: 100,
+        y: 300,
+        width: window.innerHeight * 0.06,
+        height: window.innerHeight * 0.09,
+        velocityY: 0,
+        isGrounded: false,
+        speed: window.innerWidth * 0.012,
+        gravity: window.innerHeight * 0.002,
+        jumpForce: -(window.innerHeight * 0.045),
+        
+        update: function(moveLeft, moveRight, jump, groundY) {
+            if (moveLeft) this.x -= this.speed;
+            if (moveRight) this.x += this.speed;
+
+            this.velocityY += this.gravity;
+            this.y += this.velocityY;
+
+            if (this.y + this.height >= groundY) {
+                this.y = groundY - this.height;
+                this.velocityY = 0;
+                this.isGrounded = true;
+            } else {
+                this.isGrounded = false;
+            }
+
+            if (jump && this.isGrounded) {
+                this.velocityY = this.jumpForce;
+                this.isGrounded = false;
+            }
+        }
+    };
+
+    // 4. مصفوفة الألغاز الفرعونية الـ 7 كاملة ومكتوبة بضمير
+    const riddles = [
+        { q: "شيء يكسو الناس ولكنه عارٍ من ملابسه؟", a: "الإبرة", b: "الأشجار", correct: "A" },
+        { q: "ما هو الشيء الذي ينبض بلا قلب؟", a: "الساعة", b: "المطر", correct: "A" },
+        { q: "كلما أخذت منه كَبُر، وكلما أضفت إليه صَغُر؟", a: "البحر", b: "الحفرة", correct: "B" },
+        { q: "ابن أمك وابن أبيك، وليس بأختك ولا بأخيك؟", a: "أنت", b: "الظل", correct: "A" },
+        { q: "يمشي بلا أرجل ويدخل فقط بالآذان؟", a: "الماء", b: "الصوت", correct: "B" },
+        { q: "شيء يتحدث بجميع اللغات في العالم؟", a: "صدى الصوت", b: "الكتاب", correct: "A" },
+        { q: "أنا نهاية كل شيء، وبداية الزمن والوجود؟", a: "الموت", b: "حرف الميم", correct: "B" }
+    ];
+    let currentRoom = 1;
+    let isRiddleSolved = false;
+
+    // 5. إدارة فخاخ ومناشير الغرف
+    let traps = [];
+    let spikeTimer = 0;
+    let isSpikeActive = true;
+
+    function initRoom(roomNum) {
+        player.x = 100;
+        player.velocityY = 0;
+        isRiddleSolved = false;
+        traps = [];
+        
+        let groundY = canvas.height - 150;
+
+        if (roomNum === 1) {
+            traps.push({ x: canvas.width * 0.5, y: groundY - 40, w: 60, h: 40, isMoving: false });
+        } else if (roomNum === 2) {
+            traps.push({ x: canvas.width * 0.4, y: groundY - 180, w: 60, h: 60, isMoving: true, speedX: 5, startX: canvas.width * 0.4, range: 200, dir: 1 });
+        } else if (roomNum === 3) {
+            traps.push({ x: canvas.width * 0.3, y: groundY - 40, w: 60, h: 40, isMoving: false });
+            traps.push({ x: canvas.width * 0.6, y: groundY - 200, w: 60, h: 60, isMoving: true, speedX: 7, startX: canvas.width * 0.6, range: 250, dir: 1 });
+        } else if (roomNum === 4) {
+            traps.push({ x: canvas.width * 0.4, y: groundY - 220, w: 50, h: 50, isMoving: true, speedX: 9, startX: canvas.width * 0.4, range: 300, dir: 1 });
+        } else if (roomNum === 5) {
+            traps.push({ x: canvas.width * 0.4, y: groundY - 40, w: 80, h: 40, isMoving: false });
+            traps.push({ x: canvas.width * 0.6, y: groundY - 40, w: 80, h: 40, isMoving: false });
+        } else if (roomNum === 6) {
+            traps.push({ x: canvas.width * 0.3, y: groundY - 250, w: 70, h: 70, isMoving: true, speedX: 12, startX: canvas.width * 0.3, range: 400, dir: 1 });
+        } else if (roomNum === 7) {
+            traps.push({ x: canvas.width * 0.3, y: groundY - 40, w: 60, h: 40, isMoving: false });
+            traps.push({ x: canvas.width * 0.5, y: groundY - 250, w: 60, h: 60, isMoving: true, speedX: 15, startX: canvas.width * 0.5, range: 350, dir: 1 });
+            traps.push({ x: canvas.width * 0.7, y: groundY - 40, w: 60, h: 40, isMoving: false });
+        }
+    }
+
+    // 6. تهيئة أزرار التحكم اللمسية على الشاشة
+    let keys = { left: false, right: false, jump: false };
+    let UI_Buttons = {};
+
+    function updateUIButtons() {
+        let h = canvas.height;
+        let w = canvas.width;
+        UI_Buttons = {
+            left: { x: 40, y: h - 140, w: 120, h: 100 },
+            right: { x: 190, y: h - 140, w: 120, h: 100 },
+            jump: { x: w - 180, y: h - 140, w: 140, h: 100 },
+            menuStart: { x: w/2 - 150, y: h/2 - 40, w: 300, h: 80 },
+            menuSettings: { x: w/2 - 150, y: h/2 + 80, w: 300, h: 80 }
+        };
+    }
+
+    // 7. تحديث الحسابات والفيزياء والتصادمات
+    function update() {
+        if (currentState === GameState.PLAYING) {
+            let groundY = canvas.height - 150;
+            
+            player.update(keys.left, keys.right, keys.jump, groundY);
+
+            if (player.x < 0) player.x = 0;
+            if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+
+            spikeTimer++;
+            if (spikeTimer >= 60) {
+                isSpikeActive = !isSpikeActive;
+                spikeTimer = 0;
+            }
+
+            traps.forEach(trap => {
+                if (trap.isMoving) {
+                    trap.x += trap.speedX * trap.dir;
+                    if (Math.abs(trap.x - trap.startX) > trap.range) {
+                        trap.dir *= -1;
+                    }
+                }
+
+                if (!trap.isMoving && !isSpikeActive) return;
+                
+                // فحص التصادم المربع المباشر
+                if (player.x < trap.x + trap.w && player.x + player.width > trap.x &&
+                    player.y < trap.y + trap.h && player.y + player.height > trap.y) {
+                    
+                    if (isSoundEnabled) audio.spikeHit.play().catch(()=>{});
+                    currentState = GameState.GAME_OVER;
+                    hideNativeBanner(); // إخفاء الإعلان في شاشة الموت لتحديثه لاحقاً
+                }
+            });
+
+            // فحص بلاطات حل الألغاز
+            let currentRiddle = riddles[currentRoom - 1];
+            let plateAY = groundY - 10, plateAW = 150, plateAH = 15;
+            let plateAX = canvas.width * 0.4;
+            let plateBX = canvas.width * 0.7;
+
+            if (player.x + player.width > plateAX && player.x < plateAX + plateAW && player.y + player.height >= plateAY) {
+                if (currentRiddle.correct === "A") isRiddleSolved = true;
+            }
+            if (player.x + player.width > plateBX && player.x < plateBX + plateAW && player.y + player.height >= plateAY) {
+                if (currentRiddle.correct === "B") isRiddleSolved = true;
+            }
+
+            if (isRiddleSolved && (player.x + player.width >= canvas.width - 20)) {
+                if (currentRoom < riddles.length) {
+                    currentRoom++;
+                    initRoom(currentRoom);
+                } else {
+                    currentState = GameState.VICTORY;
+                    hideNativeBanner();
+                }
+            }
+        }
+    }
+
+    // 8. المعالجة البصرية والرسم المتجهي (Hollow Knight Style برمجياً)
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        updateUIButtons();
+
+        let groundY = canvas.height - 150;
+
+        if (currentState === GameState.MAIN_MENU) {
+            ctx.fillStyle = '#0a080f';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#d2b450';
+            ctx.font = 'bold 45px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("HOLLOW PHARAOH", canvas.width / 2, canvas.height / 3);
+
+            ctx.fillStyle = '#2d2823';
+            ctx.fillRect(UI_Buttons.menuStart.x, UI_Buttons.menuStart.y, UI_Buttons.menuStart.w, UI_Buttons.menuStart.h);
+            ctx.fillRect(UI_Buttons.menuSettings.x, UI_Buttons.menuSettings.y, UI_Buttons.menuSettings.w, UI_Buttons.menuSettings.h);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '22px sans-serif';
+            ctx.fillText("ابدأ رحلة المكسب التجاري", canvas.width / 2, UI_Buttons.menuStart.y + 48);
+            ctx.fillText("ترس الإعدادات والصوت", canvas.width / 2, UI_Buttons.menuSettings.y + 48);
+
+            banner.style.display = 'none';
+
+        } else if (currentState === GameState.SETTINGS) {
+            ctx.fillStyle = '#0f0f14';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#d2b450';
+            ctx.font = '35px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("قائمة الإعدادات التجارية", canvas.width / 2, canvas.height / 4);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '20px sans-serif';
+            ctx.fillText(`المؤثرات الصوتية والموسيقى: ${isSoundEnabled ? "مشغلة ✅" : "مغلقة ❌"}`, canvas.width / 2, canvas.height / 2);
+            ctx.fillText("انقر على الشاشة في أي مكان لتغيير حالة الصوت والرجوع", canvas.width / 2, canvas.height / 2 + 80);
+
+        } else if (currentState === GameState.PLAYING) {
+            banner.style.display = 'flex'; 
+
+            ctx.fillStyle = '#0c0a12';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            let gradient = ctx.createRadialGradient(canvas.width/2, 50, 100, canvas.width/2, 50, 400);
+            gradient.addColorStop(0, '#2d2314');
+            gradient.addColorStop(1, '#0c0a12');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, groundY);
+
+            ctx.fillStyle = '#2d2823';
+            ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+            ctx.fillStyle = '#b48c32';
+            ctx.fillRect(0, groundY, canvas.width, 6);
+
+            let currentRiddle = riddles[currentRoom - 1];
+            let plateAY = groundY - 10, plateAW = 150, plateAH = 10;
+            let plateAX = canvas.width * 0.4;
+            let plateBX = canvas.width * 0.7;
+
+            ctx.fillStyle = isRiddleSolved ? '#27ae60' : '#7e512b';
+            ctx.fillRect(plateAX, plateAY, plateAW, plateAH);
+            ctx.fillRect(plateBX, plateAY, plateAW, plateAH);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '16px sans-serif';
+            ctx.fillText(currentRiddle.a, plateAX + 75, plateAY - 15);
+            ctx.fillText(currentRiddle.b, plateBX + 75, plateAY - 15);
+
+            ctx.fillStyle = '#f0dca0';
+            ctx.font = 'bold 20px sans-serif';
+            ctx.fillText(`الغرفة ${currentRoom} : ${currentRiddle.q}`, canvas.width / 2, 70);
+
+            if (isRiddleSolved) {
+                ctx.fillStyle = '#2ecc71';
+                ctx.font = '16px sans-serif';
+                ctx.fillText("انفتح الباب السحري! تحرك بسرعة لأقصى اليمين للخروج ⬅️", canvas.width / 2, 110);
+            }
+
+            traps.forEach(trap => {
+                if (!trap.isMoving) {
+                    if (isSpikeActive) {
+                        ctx.fillStyle = '#c02828';
+                        ctx.beginPath();
+                        ctx.moveTo(trap.x, trap.y + trap.h);
+                        ctx.lineTo(trap.x + trap.w / 2, trap.y);
+                        ctx.lineTo(trap.x + trap.w, trap.y + trap.h);
+                        ctx.fill();
+                    }
+                } else {
+                    ctx.fillStyle = '#bdc3c7';
+                    ctx.beginPath();
+                    ctx.arc(trap.x + trap.w/2, trap.y + trap.h/2, trap.w/2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#c0392b';
+                    ctx.beginPath();
+                    ctx.arc(trap.x + trap.w/2, trap.y + trap.h/2, 10, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            });
+
+            ctx.fillStyle = '#d2b450';
+            ctx.fillRect(player.x, player.y, player.width, player.height);
+            ctx.fillStyle = '#000000';
+            ctx.beginPath();
+            ctx.arc(player.x + player.width - 12, player.y + 20, 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+            ctx.fillRect(UI_Buttons.left.x, UI_Buttons.left.y, UI_Buttons.left.w, UI_Buttons.left.h);
+            ctx.fillRect(UI_Buttons.right.x, UI_Buttons.right.y, UI_Buttons.right.w, UI_Buttons.right.h);
+            ctx.fillRect(UI_Buttons.jump.x, UI_Buttons.jump.y, UI_Buttons.jump.w, UI_Buttons.jump.h);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '30px sans-serif';
+            ctx.fillText("◀", UI_Buttons.left.x + 60, UI_Buttons.left.y + 60);
+            ctx.fillText("▶", UI_Buttons.right.x + 60, UI_Buttons.right.y + 60);
+            ctx.font = '20px sans-serif';
+            ctx.fillText("قفز ▲", UI_Buttons.jump.x + 70, UI_Buttons.jump.y + 58);
+
+        } else if (currentState === GameState.GAME_OVER) {
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#e74c3c';
+            ctx.font = 'bold 35px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("لقد سحقتك فخاخ المقبرة القاتلة!", canvas.width / 2, canvas.height / 2 - 30);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '18px sans-serif';
+            ctx.fillText("انقر على الشاشة لإعادة المحاولة فوراً", canvas.width / 2, canvas.height / 2 + 40);
+            banner.style.display = 'none';
+
+        } else if (currentState === GameState.VICTORY) {
+            ctx.fillStyle = '#141e14';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#d2b450';
+            ctx.font = 'bold 35px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("عاش يا بطل! إنجاز أسطوري ومكسب ذهب!", canvas.width / 2, canvas.height / 2 - 40);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '18px sans-serif';
+            ctx.fillText("لقد حللت الألغاز الـ 7 بالـ HTML5 النظيف والإعلانات تعمل!", canvas.width / 2, canvas.height / 2 + 30);
+            banner.style.display = 'none';
+        }
+    }
+
+    // 9. معالجة لمس الشاشة المتعدد للأندرويد
+    function handleTouchStart(e) {
+        let touch = e.changedTouches[0];
+        let tx = touch.clientX;
+        let ty = touch.clientY;
+
+        if (currentState === GameState.MAIN_MENU) {
+            if (tx >= UI_Buttons.menuStart.x && tx <= UI_Buttons.menuStart.x + UI_Buttons.menuStart.w &&
+                ty >= UI_Buttons.menuStart.y && ty <= UI_Buttons.menuStart.y + UI_Buttons.menuStart.h) {
+                if (isSoundEnabled) audio.menuMusic.play().catch(()=>{});
+                currentRoom = 1;
+                initRoom(currentRoom);
+                currentState = GameState.PLAYING;
+                showNativeBanner(); // استدعاء الإعلان فور بدء اللعب
+            }
+            if (tx >= UI_Buttons.menuSettings.x && tx <= UI_Buttons.menuSettings.x + UI_Buttons.menuSettings.w &&
+                ty >= UI_Buttons.menuSettings.y && ty <= UI_Buttons.menuSettings.y + UI_Buttons.menuSettings.h) {
+                currentState = GameState.SETTINGS;
+            }
+        } else if (currentState === GameState.SETTINGS) {
+            isSoundEnabled = !isSoundEnabled;
+            if (!isSoundEnabled) {
+                audio.menuMusic.pause();
+            } else {
+                audio.menuMusic.play().catch(()=>{});
+            }
+            currentState = GameState.MAIN_MENU;
+        } else if (currentState === GameState.GAME_OVER) {
+            initRoom(currentRoom);
+            currentState = GameState.PLAYING;
+            showNativeBanner();
+        } else if (currentState === GameState.VICTORY) {
+            currentState = GameState.MAIN_MENU;
+        } else if (currentState === GameState.PLAYING) {
+            if (tx >= UI_Buttons.left.x && tx <= UI_Buttons.left.x + UI_Buttons.left.w &&
+                ty >= UI_Buttons.left.y && ty <= UI_Buttons.left.y + UI_Buttons.left.h) {
+                keys.left = true;
+            }
+            if (tx >= UI_Buttons.right.x && tx <= UI_Buttons.right.x + UI_Buttons.right.w &&
+                ty >= UI_Buttons.right.y && ty <= UI_Buttons.right.y + UI_Buttons.right.h) {
+                keys.right = true;
+            }
+            if (tx >= UI_Buttons.jump.x && tx <= UI_Buttons.jump.x + UI_Buttons.jump.w &&
+                ty >= UI_Buttons.jump.y && ty <= UI_Buttons.jump.y + UI_Buttons.jump.h) {
+                keys.jump = true;
+            }
+        }
+    }
+
+    function handleTouchEnd(e) {
+        let touch = e.changedTouches[0];
+        let tx = touch.clientX;
+
+        if (currentState === GameState.PLAYING) {
+            if (tx >= UI_Buttons.left.x && tx <= UI_Buttons.left.x + UI_Buttons.left.w) keys.left = false;
+            if (tx >= UI_Buttons.right.x && tx <= UI_Buttons.right.x + UI_Buttons.right.w) keys.right = false;
+            if (tx >= UI_Buttons.jump.x && tx <= UI_Buttons.jump.x + UI_Buttons.jump.w) keys.jump = false;
+        }
+    }
+
+    window.addEventListener('touchstart', handleTouchStart, { passive: false });
+    window.addEventListener('touchend', handleTouchEnd, { passive: false });
+
+    // 10. ربط الـ SDK الحقيقي لإعلانات AdMob بستخدام معرفك
+    document.addEventListener('deviceready', () => {
+        if (typeof admob !== 'undefined') {
+            admob.banner.config({
+                id: ADMOB_BANNER_ID,
+                isTesting: false, // وضع الإعلان حقيقي ومباشر لجني الأرباح
+                autoShow: false
+            });
+            admob.banner.prepare();
+        }
+    }, false);
+
+    function showNativeBanne
